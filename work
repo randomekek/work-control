@@ -2,14 +2,17 @@
 
 import sys, getpass, subprocess, os, time
 
+# settings
 hostfilename = '/etc/hosts'
 blockfilename = '/docs/main/block'
-lockfilename = '/tmp/workstart'
-daemonfilename = '/tmp/work-log' or os.devnull
-startToken = '## start-work\n'
-endToken = '## end-work\n'
 lockTime = 45*60
 unlockTime = 15*60
+
+# internals
+lockfilename = '/tmp/work-start'
+daemonfilename = '/tmp/work-log' or os.devnull
+startToken = '## work-begin\n'
+endToken = '## work-finish\n'
 
 def end(msg):
     sys.stderr.write(msg)
@@ -31,8 +34,7 @@ def block():
             if url != '' and url[0] != '#':
                 hostfile.write('127.0.0.1\t%s\n127.0.0.1\twww.%s\n' % (url, url))
         hostfile.write(endToken)
-    with open(lockfilename, 'w') as lockfile:
-        lockfile.write(str(time.time()))
+    setTime()
 
 def getTime():
     try:
@@ -43,10 +45,14 @@ def getTime():
         spent = lockTime
     return spent
 
+def setTime():
+    with open(lockfilename, 'w') as lockfile:
+        lockfile.write(str(time.time()))
+
 def unlock():
     spent = getTime()
-    if spent <= lockTime:
-                end('worked %.1f of %d minutes\n' % (spent/60.0, lockTime/60))
+    if spent < lockTime:
+        end('worked %.1f of %d minutes\n' % (spent/60.0, lockTime/60))
     with open(hostfilename, 'r+') as hostfile:
         contents = hostfile.readlines()
         writing = True
@@ -59,6 +65,7 @@ def unlock():
             if line == endToken:
                 writing = True
         hostfile.truncate()
+    setTime()
 
 def fork():
     try:
