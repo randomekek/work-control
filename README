@@ -1,0 +1,10 @@
+you will probably need to edit 'work':
+blockfilename: plain text file, one domain per line
+lockTime: how long to enforce a session - you cannot unlock before lockTime finishes
+unlockTime: how long to unlock for - after unlockTime, the hosts file will lock again
+
+to start blocking:
+sudo ./work now
+
+to stop blocking:
+sudo ./work later
