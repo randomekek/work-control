@@ -2,17 +2,6 @@
 
 import sys, getpass, subprocess, os, time
 
-def end(msg):
-    sys.stderr.write(msg)
-    exit(1)
-
-if (len(sys.argv) == 1):
-    end('usage: sudo work [now|later]\n')
-
-if (getpass.getuser() != 'root'):
-    end('need root\n')
-
-action = sys.argv[1]
 hostfilename = '/etc/hosts'
 blockfilename = '/docs/main/block'
 lockfilename = '/tmp/workstart'
@@ -21,6 +10,18 @@ startToken = '## start-work\n'
 endToken = '## end-work\n'
 lockTime = 45*60
 unlockTime = 15*60
+
+def end(msg):
+    sys.stderr.write(msg)
+    exit(1)
+
+if (len(sys.argv) == 1):
+    end('usage: sudo work [now|later|status]\n')
+else:
+    action = sys.argv[1]
+
+if not(action == 'status' or getpass.getuser() == 'root'):
+    end('need root\n')
 
 def block():
     with open(hostfilename, 'a') as hostfile, open(blockfilename, 'r') as blockfile:
@@ -33,15 +34,19 @@ def block():
     with open(lockfilename, 'w') as lockfile:
         lockfile.write(str(time.time()))
 
-def unlock():
+def getTime():
     try:
         with open(lockfilename, 'r') as lockfile:
             start = float(lockfile.read())
-            spent = (time.time() - start)
-            if spent < lockTime:
-                end('worked %.1f of %d minutes\n' % (spent/60.0, lockTime/60))
+            spent = time.time() - start
     except IOError:
-        pass
+        spent = lockTime
+    return spent
+
+def unlock():
+    spent = getTime()
+    if spent <= lockTime:
+                end('worked %.1f of %d minutes\n' % (spent/60.0, lockTime/60))
     with open(hostfilename, 'r+') as hostfile:
         contents = hostfile.readlines()
         writing = True
@@ -77,6 +82,8 @@ def daemonize():
         os.close(fd)
         os.dup2(null, fd)
 
+if action == 'status':
+    end('%.1f minutes\n' % (getTime()/60.0))
 if action == 'now':
     block()
 elif action == 'later':
@@ -85,6 +92,6 @@ elif action == 'later':
     time.sleep(unlockTime)
     block()
 else:
-    end('usage: sudo work [now|later]\n')
+    end('usage: sudo work [now|later|status]\n')
 
 subprocess.call(['/etc/init.d/networking', 'restart'], stdout=open(daemonfilename, 'w+'))
