@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 
+#TODO make status report the mode you are in
+
 import sys, getpass, subprocess, os, time
 
 # settings
 hostfilename = '/etc/hosts'
 blockfilename = '/docs/main/block'
-lockTime = 45*60
-unlockTime = 15*60
+blockTime = 45*60
+unblockTime = 15*60
 
 # internals
 lockfilename = '/tmp/work-start'
@@ -23,8 +25,34 @@ if (len(sys.argv) == 1):
 else:
     action = sys.argv[1]
 
-if not(action == 'status' or getpass.getuser() == 'root'):
+if not(action == 'status' or action == 'st' or getpass.getuser() == 'root'):
     end('need root\n')
+
+def getState():
+    try:
+        with open(lockfilename, 'r') as lockfile:
+            mode = lockfile.readline().strip()
+            spent = time.time() - float(lockfile.readline())
+        return {
+            'mode': mode,
+            'spent': spent,
+        }
+    except IOError:
+        return {
+            'mode': 'boot',
+            'spent': blockTime,
+        }
+
+def setState(mode):
+    with open(lockfilename, 'w') as lockfile:
+        lockfile.write('%s\n%d' % (mode, time.time()))
+
+def stringifyState(state):
+    return {
+        'now': 'working: %d of %d minutes\n' % (state['spent']/60, blockTime/60),
+        'later': 'resting: %d of %d minutes\n' % (state['spent']/60, unblockTime/60),
+        'boot': 'just booted',
+    }.get(state['mode'], 'undefined state')
 
 def block():
     with open(hostfilename, 'a') as hostfile, open(blockfilename, 'r') as blockfile:
@@ -34,25 +62,9 @@ def block():
             if url != '' and url[0] != '#':
                 hostfile.write('127.0.0.1\t%s\n127.0.0.1\twww.%s\n' % (url, url))
         hostfile.write(endToken)
-    setTime()
+    setState('now')
 
-def getTime():
-    try:
-        with open(lockfilename, 'r') as lockfile:
-            start = float(lockfile.read())
-            spent = time.time() - start
-    except IOError:
-        spent = lockTime
-    return spent
-
-def setTime():
-    with open(lockfilename, 'w') as lockfile:
-        lockfile.write(str(time.time()))
-
-def unlock():
-    spent = getTime()
-    if spent < lockTime:
-        end('worked %.1f of %d minutes\n' % (spent/60.0, lockTime/60))
+def unblock():
     with open(hostfilename, 'r+') as hostfile:
         contents = hostfile.readlines()
         writing = True
@@ -65,7 +77,7 @@ def unlock():
             if line == endToken:
                 writing = True
         hostfile.truncate()
-    setTime()
+    setState('later')
 
 def fork():
     try:
@@ -82,23 +94,32 @@ def daemonize():
     os.setsid()   # create new process group
     os.umask(18)  # rw-r--r--
     fork() or end('second fork failed')
-    # redirect stdout,stdin,stderr (0,1,2) to /dev/null
     file = open(daemonfilename, 'w+')
     null = file.fileno()
-    for fd in [0,1,2]:
+    for fd in [0,1,2]: # stdin = 0, stdout = 1, stderr = 2
         os.close(fd)
         os.dup2(null, fd)
 
-if action == 'status':
-    end('%.1f minutes\n' % (getTime()/60.0))
+state = getState()
+if action == 'status' or action == 'st':
+    end(stringifyState(state))
 if action == 'now':
+    if state['mode'] == 'now':
+        sys.stderr.write('extending the block\n')
     block()
 elif action == 'later':
-    unlock()
-    daemonize()
-    time.sleep(unlockTime)
-    block()
+    if state['mode'] == 'later':
+        end(stringifyState(state))
+    elif state['mode'] == 'now' and state['spent'] < blockTime:
+        sys.stderr.write('work duration insufficient\n')
+        end(stringifyState(state))
+    else:
+        unblock()
+        daemonize()
+        time.sleep(unblockTime)
+        if getState()['mode'] != 'now':
+            block()
 else:
-    end('usage: sudo work [now|later|status]\n')
+    end('usage: sudo work [now|later|status|st]\n')
 
 subprocess.call(['/etc/init.d/networking', 'restart'], stdout=open(daemonfilename, 'w+'))
